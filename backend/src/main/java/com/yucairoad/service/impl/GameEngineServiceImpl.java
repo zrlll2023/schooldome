@@ -5,9 +5,11 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yucairoad.common.BusinessException;
 import com.yucairoad.dto.GameState;
+import com.yucairoad.dto.EventDTO;
 import com.yucairoad.entity.GameSave;
 import com.yucairoad.mapper.GameSaveMapper;
 import com.yucairoad.service.ExamService;
+import com.yucairoad.service.EventEngineService;
 import com.yucairoad.service.GameEngineService;
 import com.yucairoad.service.GameSaveService;
 import lombok.extern.slf4j.Slf4j;
@@ -31,14 +33,17 @@ public class GameEngineServiceImpl implements GameEngineService {
     private final GameSaveService gameSaveService;
     private final GameSaveMapper gameSaveMapper;
     private final ExamService examService;
+    private final EventEngineService eventEngineService;
     private final ObjectMapper objectMapper;
 
     public GameEngineServiceImpl(GameSaveService gameSaveService,
                                  GameSaveMapper gameSaveMapper,
-                                 ExamService examService) {
+                                 ExamService examService,
+                                 EventEngineService eventEngineService) {
         this.gameSaveService = gameSaveService;
         this.gameSaveMapper = gameSaveMapper;
         this.examService = examService;
+        this.eventEngineService = eventEngineService;
         this.objectMapper = new ObjectMapper();
     }
 
@@ -57,6 +62,24 @@ public class GameEngineServiceImpl implements GameEngineService {
         processKeyMonthEvents(state, nextMonth);
         triggerExamsByMonth(saveId, nextMonth);
         calculateMonthlyFinance(state);
+
+        try {
+            List<EventDTO> newEvents = eventEngineService.generateMonthlyEvents(saveId);
+            if (newEvents != null && !newEvents.isEmpty()) {
+                log.info("本月生成{}个新事件", newEvents.size());
+                for (EventDTO evt : newEvents) {
+                    GameState.GameEvent gameEvent = new GameState.GameEvent();
+                    gameEvent.setType(evt.getEventType());
+                    gameEvent.setTitle(evt.getTitle());
+                    gameEvent.setDescription(evt.getDescription());
+                    gameEvent.setMonth(nextMonth);
+                    addEvent(state.getEvents(), evt.getEventType(), evt.getTitle(), evt.getDescription(), nextMonth);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("事件生成失败,月份: {},错误: {}", nextMonth, e.getMessage());
+        }
+
         persistGameState(saveId, state);
 
         return state;

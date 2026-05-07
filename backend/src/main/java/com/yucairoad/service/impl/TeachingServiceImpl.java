@@ -8,10 +8,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.yucairoad.common.BusinessException;
 import com.yucairoad.dto.*;
+import com.yucairoad.entity.EventLog;
 import com.yucairoad.entity.GameSave;
 import com.yucairoad.entity.School;
 import com.yucairoad.entity.Student;
 import com.yucairoad.entity.Teacher;
+import com.yucairoad.mapper.EventLogMapper;
 import com.yucairoad.mapper.GameSaveMapper;
 import com.yucairoad.mapper.SchoolMapper;
 import com.yucairoad.mapper.StudentMapper;
@@ -53,16 +55,19 @@ public class TeachingServiceImpl implements TeachingService {
     private final TeacherMapper teacherMapper;
     private final StudentMapper studentMapper;
     private final SchoolMapper schoolMapper;
+    private final EventLogMapper eventLogMapper;
     private final ObjectMapper objectMapper;
 
     public TeachingServiceImpl(GameSaveMapper gameSaveMapper,
                                TeacherMapper teacherMapper,
                                StudentMapper studentMapper,
-                               SchoolMapper schoolMapper) {
+                               SchoolMapper schoolMapper,
+                               EventLogMapper eventLogMapper) {
         this.gameSaveMapper = gameSaveMapper;
         this.teacherMapper = teacherMapper;
         this.studentMapper = studentMapper;
         this.schoolMapper = schoolMapper;
+        this.eventLogMapper = eventLogMapper;
         this.objectMapper = new ObjectMapper();
     }
 
@@ -624,5 +629,224 @@ public class TeachingServiceImpl implements TeachingService {
             case "RICH": return 0.0;
             default: return 7.5;
         }
+    }
+
+    @Override
+    public DisciplineResult disciplineStudent(Long saveId, Long studentId, DisciplineRequest request) {
+        Student student = studentMapper.selectById(studentId);
+        if (student == null) {
+            throw new BusinessException("学生不存在");
+        }
+
+        Long schoolId = getSchoolIdBySaveId(saveId);
+
+        LambdaQueryWrapper<EventLog> eventWrapper = new LambdaQueryWrapper<>();
+        eventWrapper.eq(EventLog::getSaveId, saveId)
+                   .eq(EventLog::getEventType, "STUDENT_VIOLATION")
+                   .eq(EventLog::getResult, String.valueOf(studentId));
+        Long violationCount = eventLogMapper.selectCount(eventWrapper);
+        if (violationCount == null || violationCount == 0) {
+            throw new BusinessException("该学生未触发违纪事件，无法进行纪律处分");
+        }
+
+        String reason = request != null && request.getReason() != null ? request.getReason() : "违纪行为";
+
+        BigDecimal currentAcademic = student.getAcademicScore() != null ? student.getAcademicScore() : BigDecimal.valueOf(60);
+        BigDecimal currentHealth = student.getHealthScore() != null ? student.getHealthScore() : BigDecimal.valueOf(80);
+
+        BigDecimal newAcademic = currentAcademic.subtract(BigDecimal.TEN).max(BigDecimal.ZERO);
+        BigDecimal newHealth = currentHealth.subtract(new BigDecimal("20")).max(BigDecimal.ZERO);
+        student.setAcademicScore(newAcademic);
+        student.setHealthScore(newHealth);
+        studentMapper.updateById(student);
+
+        EventLog disciplineLog = new EventLog();
+        disciplineLog.setSaveId(saveId);
+        disciplineLog.setEventType("DISCIPLINE");
+        disciplineLog.setEventTitle("纪律处分 - " + student.getName());
+        disciplineLog.setEventDescription("对" + student.getName() + "执行纪律处分，原因：" + reason);
+        disciplineLog.setResult("{\"studentId\":" + studentId + ",\"academicChange\":-10,\"healthChange\":-20}");
+        disciplineLog.setTriggerYear(LocalDate.now().getYear());
+        disciplineLog.setTriggerMonth(LocalDate.now().getMonthValue());
+        disciplineLog.setCreatedAt(LocalDateTime.now());
+        eventLogMapper.insert(disciplineLog);
+
+        School school = schoolMapper.selectById(schoolId);
+        if (school != null) {
+            LambdaQueryWrapper<Student> allStudentsWrapper = new LambdaQueryWrapper<>();
+            allStudentsWrapper.eq(Student::getSchoolId, schoolId);
+            List<Student> allStudents = studentMapper.selectList(allStudentsWrapper);
+            for (Student s : allStudents) {
+                if (!s.getId().equals(studentId)) {
+                    BigDecimal sHealth = s.getHealthScore() != null ? s.getHealthScore() : BigDecimal.valueOf(80);
+                    s.setHealthScore(sHealth.add(BigDecimal.ONE).min(new BigDecimal("100")));
+                    studentMapper.updateById(s);
+                }
+            }
+        }
+
+        DisciplineResult result = new DisciplineResult();
+        result.setStudentId(studentId);
+        result.setStudentName(student.getName());
+        result.setNewAcademicScore(newAcademic);
+        result.setNewHealthScore(newHealth);
+        result.setDisciplineReason(reason);
+        result.setMessage("已对学生" + student.getName() + "执行纪律处分，学业-10，身心-20。全校其他学生身心+1（震慑效果）");
+        return result;
+    }
+
+    @Override
+    public ExpelResult expelStudent(Long saveId, Long studentId) {
+        Student student = studentMapper.selectById(studentId);
+        if (student == null) {
+            throw new BusinessException("学生不存在");
+        }
+
+        BigDecimal academicScore = student.getAcademicScore() != null ? student.getAcademicScore() : BigDecimal.valueOf(60);
+        if (academicScore.compareTo(new BigDecimal("20")) >= 0) {
+            throw new BusinessException("该学生学业成绩不低于20分，不满足劝退条件（需academicScore < 20）");
+        }
+
+        Long schoolId = getSchoolIdBySaveId(saveId);
+        int consecutiveMonthsBelow30 = checkConsecutiveLowAcademic(studentId, saveId);
+        if (consecutiveMonthsBelow30 < 2) {
+            throw new BusinessException("该学生连续" + consecutiveMonthsBelow30 + "个月学业低于30分，不满足劝退条件（需连续2个月<30）");
+        }
+
+        student.setStatus("劝退");
+        studentMapper.updateById(student);
+
+        School school = schoolMapper.selectById(schoolId);
+        if (school != null) {
+            int currentReputation = school.getReputation() != null ? school.getReputation() : 0;
+            school.setReputation(currentReputation - 10);
+            int currentStudentCount = school.getStudentCount() != null ? school.getStudentCount() : 0;
+            school.setStudentCount(Math.max(0, currentStudentCount - 1));
+            schoolMapper.updateById(school);
+        }
+
+        ExpelResult result = new ExpelResult();
+        result.setStudentId(studentId);
+        result.setStudentName(student.getName());
+        result.setNewReputation(school != null ? school.getReputation() : 0);
+        result.setNewStudentCount(school != null ? school.getStudentCount() : 0);
+        result.setMessage("已将学生" + student.getName() + "劝退转学，学校声望-10，学生数-1");
+        return result;
+    }
+
+    private int checkConsecutiveLowAcademic(Long studentId, Long saveId) {
+        LambdaQueryWrapper<EventLog> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(EventLog::getSaveId, saveId)
+               .eq(EventLog::getEventType, "ACADEMIC_UPDATE")
+               .like(EventLog::getResult, "\"studentId\":" + studentId)
+               .orderByDesc(EventLog::getCreatedAt);
+        List<EventLog> logs = eventLogMapper.selectList(wrapper);
+
+        int consecutiveCount = 0;
+        for (EventLog log : logs) {
+            try {
+                Map<String, Object> resultMap = objectMapper.readValue(log.getResult(), new TypeReference<Map<String, Object>>() {});
+                Double score = resultMap.get("academicScore") != null ?
+                    ((Number) resultMap.get("academicScore")).doubleValue() : null;
+                if (score != null && score < 30) {
+                    consecutiveCount++;
+                } else {
+                    break;
+                }
+            } catch (Exception e) {
+                break;
+            }
+        }
+        return consecutiveCount;
+    }
+
+    @Override
+    public Page<StudentInfo> getAtRiskStudents(Long saveId, int page, int size) {
+        Long schoolId = getSchoolIdBySaveId(saveId);
+
+        List<Student> atRiskList = new ArrayList<>();
+        LambdaQueryWrapper<Student> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Student::getSchoolId, schoolId);
+        List<Student> allStudents = studentMapper.selectList(wrapper);
+
+        for (Student student : allStudents) {
+            BigDecimal academic = student.getAcademicScore() != null ? student.getAcademicScore() : BigDecimal.valueOf(60);
+            BigDecimal health = student.getHealthScore() != null ? student.getHealthScore() : BigDecimal.valueOf(80);
+            if (academic.compareTo(new BigDecimal("30")) < 0 || health.compareTo(new BigDecimal("20")) < 0) {
+                atRiskList.add(student);
+            }
+        }
+
+        int start = (page - 1) * size;
+        int end = Math.min(start + size, atRiskList.size());
+        List<Student> pageList = start < atRiskList.size() ? atRiskList.subList(start, end) : new ArrayList<>();
+
+        Page<StudentInfo> resultPage = new Page<>(page, size, atRiskList.size());
+        List<StudentInfo> studentInfos = new ArrayList<>();
+        for (Student student : pageList) {
+            studentInfos.add(convertToStudentInfo(student));
+        }
+        resultPage.setRecords(studentInfos);
+        return resultPage;
+    }
+
+    @Override
+    public StudentStatisticsDTO getStudentStatistics(Long saveId) {
+        Long schoolId = getSchoolIdBySaveId(saveId);
+
+        LambdaQueryWrapper<Student> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Student::getSchoolId, schoolId);
+        List<Student> students = studentMapper.selectList(wrapper);
+
+        StudentStatisticsDTO stats = new StudentStatisticsDTO();
+        stats.setTotalStudents((long) students.size());
+
+        if (!students.isEmpty()) {
+            double sumAcademic = 0, sumQuality = 0, sumHealth = 0;
+            Map<String, Integer> gradeDistribution = new HashMap<>();
+            gradeDistribution.put("S", 0);
+            gradeDistribution.put("A", 0);
+            gradeDistribution.put("B", 0);
+            gradeDistribution.put("C", 0);
+            gradeDistribution.put("D", 0);
+            int atRiskCount = 0;
+
+            for (Student student : students) {
+                BigDecimal academic = student.getAcademicScore() != null ? student.getAcademicScore() : BigDecimal.valueOf(60);
+                BigDecimal quality = student.getQualityScore() != null ? student.getQualityScore() : BigDecimal.valueOf(60);
+                BigDecimal health = student.getHealthScore() != null ? student.getHealthScore() : BigDecimal.valueOf(80);
+
+                sumAcademic += academic.doubleValue();
+                sumQuality += quality.doubleValue();
+                sumHealth += health.doubleValue();
+
+                String level = student.getGradeLevel();
+                if (level != null && gradeDistribution.containsKey(level)) {
+                    gradeDistribution.merge(level, 1, Integer::sum);
+                } else {
+                    gradeDistribution.merge("B", 1, Integer::sum);
+                }
+
+                if (academic.compareTo(new BigDecimal("30")) < 0 || health.compareTo(new BigDecimal("20")) < 0) {
+                    atRiskCount++;
+                }
+            }
+
+            stats.setAvgAcademic(Math.round(sumAcademic / students.size() * 10.0) / 10.0);
+            stats.setAvgQuality(Math.round(sumQuality / students.size() * 10.0) / 10.0);
+            stats.setAvgHealth(Math.round(sumHealth / students.size() * 10.0) / 10.0);
+            stats.setGradeDistribution(gradeDistribution);
+            stats.setAtRiskCount(atRiskCount);
+            stats.setExcellentCount(gradeDistribution.getOrDefault("S", 0));
+        } else {
+            stats.setAvgAcademic(0.0);
+            stats.setAvgQuality(0.0);
+            stats.setAvgHealth(0.0);
+            stats.setGradeDistribution(Map.of("S", 0, "A", 0, "B", 0, "C", 0, "D", 0));
+            stats.setAtRiskCount(0);
+            stats.setExcellentCount(0);
+        }
+
+        return stats;
     }
 }

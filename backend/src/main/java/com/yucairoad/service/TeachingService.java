@@ -22,5 +22,13 @@ public interface TeachingService {
 
     void focusStudent(Long saveId, Long studentId);
 
+    DisciplineResult disciplineStudent(Long saveId, Long studentId, DisciplineRequest request);
+
+    ExpelResult expelStudent(Long saveId, Long studentId);
+
+    Page<StudentInfo> getAtRiskStudents(Long saveId, int page, int size);
+
+    StudentStatisticsDTO getStudentStatistics(Long saveId);
+
     TeachingPrediction getPrediction(Long saveId);
 }

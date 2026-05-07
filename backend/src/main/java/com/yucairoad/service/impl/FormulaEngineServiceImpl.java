@@ -7,14 +7,18 @@ import com.yucairoad.dto.EnrollmentPolicy;
 import com.yucairoad.dto.TeachingPolicy;
 import com.yucairoad.entity.Building;
 import com.yucairoad.entity.ExamRecord;
+import com.yucairoad.entity.EventLog;
 import com.yucairoad.entity.School;
 import com.yucairoad.entity.Student;
 import com.yucairoad.entity.Teacher;
+import com.yucairoad.mapper.EventLogMapper;
 import com.yucairoad.service.FinanceService;
 import com.yucairoad.service.FormulaEngineService;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -39,9 +43,11 @@ public class FormulaEngineServiceImpl implements FormulaEngineService {
     private static final double QUALITY_BONUS_MAX = 0.2;
 
     private final FinanceService financeService;
+    private final EventLogMapper eventLogMapper;
 
-    public FormulaEngineServiceImpl(FinanceService financeService) {
+    public FormulaEngineServiceImpl(FinanceService financeService, EventLogMapper eventLogMapper) {
         this.financeService = financeService;
+        this.eventLogMapper = eventLogMapper;
     }
 
     @Override
@@ -159,51 +165,99 @@ public class FormulaEngineServiceImpl implements FormulaEngineService {
         }
 
         Random random = new Random(System.currentTimeMillis());
+        double avgTeacherAbility = calculateAverageTeacherAbility(students);
+        int currentMonth = LocalDate.now().getMonthValue();
+
         for (Student student : students) {
-            updateSingleStudentAttributes(student, policy, random);
+            updateSingleStudentAttributes(student, policy, random, avgTeacherAbility, currentMonth);
         }
         return students;
     }
 
-    private void updateSingleStudentAttributes(Student student, TeachingPolicy policy, Random random) {
-        double academicChange = -2 + random.nextDouble() * 5;
-        double qualityChange = -1 + random.nextDouble() * 3;
-        double healthChange = -3 + random.nextDouble() * 6;
+    private double calculateAverageTeacherAbility(List<Student> students) {
+        return 60.0;
+    }
 
-        if (policy != null) {
-            String extracurricular = policy.getExtracurricular();
-            if ("RICH".equalsIgnoreCase(extracurricular)) {
-                qualityChange += 2;
-            } else if ("MODERATE".equalsIgnoreCase(extracurricular)) {
-                qualityChange += 1;
-            }
+    private void updateSingleStudentAttributes(Student student, TeachingPolicy policy, Random random,
+                                               double avgTeacherAbility, int currentMonth) {
 
-            String homeworkLoad = policy.getHomeworkLoad();
-            if ("HEAVY".equalsIgnoreCase(homeworkLoad)) {
-                healthChange -= 2;
-            } else if ("MODERATE".equalsIgnoreCase(homeworkLoad)) {
-                healthChange -= 1;
-            }
+        double baseChange = avgTeacherAbility / 20.0 - 2.0;
 
-            String weekendArrangement = policy.getWeekendArrangement();
-            if ("REST".equalsIgnoreCase(weekendArrangement)) {
-                healthChange += 2;
-            } else if ("FULL_DAY".equalsIgnoreCase(weekendArrangement)) {
-                healthChange -= 1;
+        String homeworkLoad = policy != null ? policy.getHomeworkLoad() : "MODERATE";
+        int homeworkEffect = switch (homeworkLoad) {
+            case "LIGHT" -> 0;
+            case "MODERATE" -> 1;
+            case "HEAVY" -> 2;
+            default -> 1;
+        };
+
+        int competitionBonus = 0;
+        if (policy != null && "INTENSIVE".equals(policy.getCompetitionTraining())) {
+            BigDecimal academic = student.getAcademicScore() != null ? student.getAcademicScore() : BigDecimal.valueOf(60);
+            if (academic.compareTo(new BigDecimal("85")) >= 0) {
+                competitionBonus = 2;
             }
         }
 
+        int randomFactor = random.nextInt(6) - 2;
+
+        double academicTotal = baseChange + homeworkEffect + competitionBonus + randomFactor;
+
+        String extracurricular = policy != null ? policy.getExtracurricular() : "MODERATE";
+        int extracurricularEffect = switch (extracurricular) {
+            case "RICH" -> 2;
+            case "MODERATE" -> 1;
+            case "SIMPLE" -> 0;
+            default -> 1;
+        };
+
+        int teachingStyleBonus = 0;
+        if (policy != null && "QUALITY".equals(policy.getTeachingStyle())) {
+            teachingStyleBonus = 1;
+        }
+
+        int qualityRandomFactor = random.nextInt(4) - 1;
+
+        double qualityTotal = extracurricularEffect + teachingStyleBonus + qualityRandomFactor;
+
+        int pressureFromHomework = switch (homeworkLoad) {
+            case "LIGHT" -> 0;
+            case "MODERATE" -> -1;
+            case "HEAVY" -> -2;
+            default -> -1;
+        };
+
+        String weekendArrangement = policy != null ? policy.getWeekendArrangement() : "HALF_DAY";
+        int pressureFromWeekend = switch (weekendArrangement) {
+            case "REST" -> 2;
+            case "HALF_DAY" -> 0;
+            case "FULL_DAY" -> -1;
+            default -> 0;
+        };
+
+        int examStress = 0;
+        if (currentMonth == 1 || currentMonth == 6 || currentMonth == 7) {
+            examStress = -2;
+        }
+
+        int healthRandomFactor = random.nextInt(7) - 3;
+
+        double healthTotal = pressureFromHomework + pressureFromWeekend + examStress + healthRandomFactor;
+
         BigDecimal currentAcademic = student.getAcademicScore() != null ?
                 student.getAcademicScore() : BigDecimal.valueOf(60);
-        student.setAcademicScore(clampBigDecimal(currentAcademic.add(BigDecimal.valueOf(academicChange)), 0, 100));
+        BigDecimal newAcademic = clampBigDecimal(currentAcademic.add(BigDecimal.valueOf(academicTotal)), 0, 100);
+        student.setAcademicScore(newAcademic);
 
         BigDecimal currentQuality = student.getQualityScore() != null ?
                 student.getQualityScore() : BigDecimal.valueOf(60);
-        student.setQualityScore(clampBigDecimal(currentQuality.add(BigDecimal.valueOf(qualityChange)), 0, 100));
+        BigDecimal newQuality = clampBigDecimal(currentQuality.add(BigDecimal.valueOf(qualityTotal)), 0, 100);
+        student.setQualityScore(newQuality);
 
         BigDecimal currentHealth = student.getHealthScore() != null ?
                 student.getHealthScore() : BigDecimal.valueOf(80);
-        student.setHealthScore(clampBigDecimal(currentHealth.add(BigDecimal.valueOf(healthChange)), 0, 100));
+        BigDecimal newHealth = clampBigDecimal(currentHealth.add(BigDecimal.valueOf(healthTotal)), 0, 100);
+        student.setHealthScore(newHealth);
     }
 
     private double getBasePotential(String gradeLevel) {

@@ -82,6 +82,38 @@ public class TeachingController {
         return Result.success("已将该学生设为重点关注", null);
     }
 
+    @PostMapping("/students/{studentId}/discipline")
+    public Result<DisciplineResult> disciplineStudent(
+            @RequestParam("saveId") Long saveId,
+            @PathVariable Long studentId,
+            @RequestBody DisciplineRequest request) {
+        DisciplineResult result = teachingService.disciplineStudent(saveId, studentId, request);
+        return Result.success(result);
+    }
+
+    @PostMapping("/students/{studentId}/expel")
+    public Result<ExpelResult> expelStudent(
+            @RequestParam("saveId") Long saveId,
+            @PathVariable Long studentId) {
+        ExpelResult result = teachingService.expelStudent(saveId, studentId);
+        return Result.success(result);
+    }
+
+    @GetMapping("/students/at-risk")
+    public Result<Page<StudentInfo>> getAtRiskStudents(
+            @RequestParam("saveId") Long saveId,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "10") int size) {
+        Page<StudentInfo> students = teachingService.getAtRiskStudents(saveId, page, size);
+        return Result.success(students);
+    }
+
+    @GetMapping("/statistics")
+    public Result<StudentStatisticsDTO> getStudentStatistics(@RequestParam("saveId") Long saveId) {
+        StudentStatisticsDTO stats = teachingService.getStudentStatistics(saveId);
+        return Result.success(stats);
+    }
+
     @GetMapping("/prediction")
     public Result<TeachingPrediction> getPrediction(@RequestParam("saveId") Long saveId) {
         TeachingPrediction prediction = teachingService.getPrediction(saveId);
