@@ -7,8 +7,10 @@ import com.yucairoad.common.BusinessException;
 import com.yucairoad.dto.GameState;
 import com.yucairoad.entity.GameSave;
 import com.yucairoad.mapper.GameSaveMapper;
+import com.yucairoad.service.ExamService;
 import com.yucairoad.service.GameEngineService;
 import com.yucairoad.service.GameSaveService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -16,6 +18,7 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 
+@Slf4j
 @Service
 public class GameEngineServiceImpl implements GameEngineService {
 
@@ -27,12 +30,15 @@ public class GameEngineServiceImpl implements GameEngineService {
 
     private final GameSaveService gameSaveService;
     private final GameSaveMapper gameSaveMapper;
+    private final ExamService examService;
     private final ObjectMapper objectMapper;
 
     public GameEngineServiceImpl(GameSaveService gameSaveService,
-                                 GameSaveMapper gameSaveMapper) {
+                                 GameSaveMapper gameSaveMapper,
+                                 ExamService examService) {
         this.gameSaveService = gameSaveService;
         this.gameSaveMapper = gameSaveMapper;
+        this.examService = examService;
         this.objectMapper = new ObjectMapper();
     }
 
@@ -49,6 +55,7 @@ public class GameEngineServiceImpl implements GameEngineService {
         state.setCurrentMonth(nextMonth);
 
         processKeyMonthEvents(state, nextMonth);
+        triggerExamsByMonth(saveId, nextMonth);
         calculateMonthlyFinance(state);
         persistGameState(saveId, state);
 
@@ -199,6 +206,22 @@ public class GameEngineServiceImpl implements GameEngineService {
         event.setDescription(description);
         event.setMonth(month);
         events.add(event);
+    }
+
+    private void triggerExamsByMonth(Long saveId, int month) {
+        try {
+            if (month == 1 || month == 7) {
+                examService.processFinalExam(saveId);
+            } else if (month == 6) {
+                examService.processGaokao(saveId);
+                examService.processMiddleSchoolExam(saveId);
+                examService.processPrimarySchoolExam(saveId);
+            } else {
+                examService.processMonthlyExam(saveId);
+            }
+        } catch (Exception e) {
+            log.warn("考试触发失败,月份: {},错误: {}", month, e.getMessage());
+        }
     }
 
     private String getSchoolName(GameState state) {
