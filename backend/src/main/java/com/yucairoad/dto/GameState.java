@@ -6,6 +6,7 @@ import java.io.Serializable;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Data
 public class GameState implements Serializable {
@@ -35,6 +36,8 @@ public class GameState implements Serializable {
     private GameStatistics statistics;
 
     private EnrollmentPolicy enrollmentPolicy;
+
+    private K12System k12System;
 
     public GameState() {
         this.events = new ArrayList<>();
@@ -100,5 +103,40 @@ public class GameState implements Serializable {
             this.avgHealth = 80.0;
             this.satisfaction = 70.0;
         }
+    }
+
+    @Data
+    public static class K12System implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private Boolean hasPrimary;
+        private Boolean hasJunior;
+        private Boolean hasSenior;
+        private SchoolInfo primarySchool;
+        private SchoolInfo juniorSchool;
+        private SchoolInfo seniorSchool;
+        private Map<String, Object> primaryBuildProgress;
+        private Map<String, Object> juniorBuildProgress;
+        private PipelineData pipelineData;
+        private SynergyEffects synergyEffects;
+        private Integer consecutiveExcellenceYears;
+    }
+
+    @Data
+    public static class PipelineData implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private Double primaryToJuniorRate;
+        private Double juniorToSeniorRate;
+        private Integer primaryGraduates;
+        private Integer juniorGraduates;
+        private Integer k12FullTrainedStudents;
+    }
+
+    @Data
+    public static class SynergyEffects implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private Boolean resourceSharing;
+        private Boolean teacherMobility;
+        private Boolean brandBonus;
+        private Boolean districtEffect;
     }
 }

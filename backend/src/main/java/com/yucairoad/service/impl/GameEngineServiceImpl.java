@@ -8,6 +8,7 @@ import com.yucairoad.dto.GameState;
 import com.yucairoad.dto.EventDTO;
 import com.yucairoad.entity.GameSave;
 import com.yucairoad.mapper.GameSaveMapper;
+import com.yucairoad.service.BranchService;
 import com.yucairoad.service.ExamService;
 import com.yucairoad.service.EventEngineService;
 import com.yucairoad.service.GameEngineService;
@@ -34,16 +35,19 @@ public class GameEngineServiceImpl implements GameEngineService {
     private final GameSaveMapper gameSaveMapper;
     private final ExamService examService;
     private final EventEngineService eventEngineService;
+    private final BranchService branchService;
     private final ObjectMapper objectMapper;
 
     public GameEngineServiceImpl(GameSaveService gameSaveService,
                                  GameSaveMapper gameSaveMapper,
                                  ExamService examService,
-                                 EventEngineService eventEngineService) {
+                                 EventEngineService eventEngineService,
+                                 BranchService branchService) {
         this.gameSaveService = gameSaveService;
         this.gameSaveMapper = gameSaveMapper;
         this.examService = examService;
         this.eventEngineService = eventEngineService;
+        this.branchService = branchService;
         this.objectMapper = new ObjectMapper();
     }
 
@@ -61,7 +65,32 @@ public class GameEngineServiceImpl implements GameEngineService {
 
         processKeyMonthEvents(state, nextMonth);
         triggerExamsByMonth(saveId, nextMonth);
+
+        try {
+            GameState.K12System k12System = state.getK12System();
+            if (k12System != null) {
+                if (k12System.getPrimaryBuildProgress() != null && "BUILDING".equals(k12System.getPrimaryBuildProgress().get("status"))) {
+                    k12Service.updateBuildProgress(saveId, "PRIMARY");
+                }
+                if (k12System.getJuniorBuildProgress() != null && "BUILDING".equals(k12System.getJuniorBuildProgress().get("status"))) {
+                    k12Service.updateBuildProgress(saveId, "JUNIOR");
+                }
+                if (nextMonth == 6) {
+                    k12Service.processPipeline(saveId);
+                }
+                k12Service.updateSynergyEffects(saveId);
+            }
+        } catch (Exception e) {
+            log.warn("K12系统处理失败,月份: {},错误: {}", nextMonth, e.getMessage());
+        }
+
         calculateMonthlyFinance(state);
+
+        try {
+            branchService.updateAllBranches(saveId);
+        } catch (Exception e) {
+            log.warn("分校月度更新失败,错误: {}", e.getMessage());
+        }
 
         try {
             List<EventDTO> newEvents = eventEngineService.generateMonthlyEvents(saveId);
