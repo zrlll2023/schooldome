@@ -31,7 +31,47 @@ public class GameSaveServiceImpl implements GameSaveService {
             throw new BusinessException("存档数量已达上限，最多支持" + MAX_SAVE_COUNT + "个存档");
         }
 
-        String initialGameState = "{\"currentYear\":1,\"currentMonth\":9,\"school\":null}";
+        String initialGameState = """
+                {
+                  "currentYear":1,
+                  "currentMonth":9,
+                  "school":{
+                    "name":"育才中学",
+                    "type":"高中",
+                    "level":"普通",
+                    "totalYears":0,
+                    "buildings":[
+                      {"type":"教学楼","level":1,"capacity":300,"monthlyCost":2000},
+                      {"type":"宿舍楼","level":1,"capacity":200,"monthlyCost":1500},
+                      {"type":"图书馆","level":1,"capacity":100,"monthlyCost":1000}
+                    ],
+                    "teachers":[
+                      {"name":"教师1","level":"二级教师","teachingAbility":65,"salary":8000},
+                      {"name":"教师2","level":"二级教师","teachingAbility":70,"salary":8000},
+                      {"name":"教师3","level":"二级教师","teachingAbility":68,"salary":8000},
+                      {"name":"教师4","level":"二级教师","teachingAbility":72,"salary":8000},
+                      {"name":"教师5","level":"二级教师","teachingAbility":66,"salary":8000},
+                      {"name":"教师6","level":"二级教师","teachingAbility":74,"salary":8000},
+                      {"name":"教师7","level":"二级教师","teachingAbility":69,"salary":8000},
+                      {"name":"教师8","level":"二级教师","teachingAbility":71,"salary":8000},
+                      {"name":"教师9","level":"二级教师","teachingAbility":67,"salary":8000},
+                      {"name":"教师10","level":"二级教师","teachingAbility":73,"salary":8000}
+                    ]
+                  },
+                  "funds":2000000,
+                  "reputation":0,
+                  "studentCount":0,
+                  "teacherCount":10,
+                  "speed":1,
+                  "isPaused":false,
+                  "events":[],
+                  "statistics":{
+                    "avgAcademic":60.0,
+                    "avgQuality":60.0,
+                    "avgHealth":80.0,
+                    "satisfaction":70.0
+                  }
+                }""";
 
         GameSave gameSave = new GameSave();
         gameSave.setUserId(userId);
