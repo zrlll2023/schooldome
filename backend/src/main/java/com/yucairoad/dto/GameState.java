@@ -34,6 +34,8 @@ public class GameState implements Serializable {
 
     private GameStatistics statistics;
 
+    private EnrollmentPolicy enrollmentPolicy;
+
     public GameState() {
         this.events = new ArrayList<>();
         this.statistics = new GameStatistics();
